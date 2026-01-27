@@ -1,26 +1,27 @@
+// api/simrail.js
 export default async function handler(req, res) {
-  // Pobieramy parametry: s (serwer), t (pociąg), type (rodzaj danych)
-  const { s = 'pl3', t = '', type = 'trains' } = req.query;
-  
-  let targetUrl = "";
-
-  if (type === 'trains') {
-    // Lista pociągów na serwerze (np. PL3)
-    targetUrl = `https://panel.simrail.eu:8084/trains-open?serverCode=${s}`;
-  } else if (type === 'timetable') {
-    // Rozkład konkretnego pociągu
-    targetUrl = `https://api1.aws.simrail.eu:8082/api/getAllTimetables?serverCode=${s}&train=${t}`;
-  }
-
-  try {
-    const response = await fetch(targetUrl);
-    const data = await response.json();
-
-    // Nagłówki CORS dla InfinityFree
+    // Te nagłówki naprawiają błąd CORS
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Content-Type', 'application/json');
-    return res.status(200).json(data);
-  } catch (error) {
-    return res.status(500).json({ error: "Błąd SimRail API" });
-  }
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+    const { s, type, tno } = req.query;
+    
+    // Budujemy URL do serwera SimRail
+    let url = `https://codrut666.github.io/SimRailLineData/${s}_trains.json`;
+    if (type === 'details') {
+        url = `https://codrut666.github.io/SimRailLineData/${s}_details_${tno}.json`;
+    }
+
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Błąd pobierania z SimRail');
+        const data = await response.json();
+        
+        // Zwracamy dane do Twojej strony
+        res.status(200).json({ data });
+    } catch (error) {
+        // Jeśli tu wpadnie, Vercel wyśle 500 - upewnij się, że URL powyżej jest poprawny!
+        res.status(500).json({ error: error.message });
+    }
 }
