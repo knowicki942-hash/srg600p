@@ -1,30 +1,47 @@
 export default async function handler(req, res) {
-    // Nagłówki CORS - bez tego strona na InfinityFree nie zadziała
+    // 1. Zawsze ustawiamy nagłówki na samym początku
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    const { s, type, tno } = req.query; // s = nazwa serwera (np. pl1), tno = numer pociągu
+    // Obsługa pre-flight dla przeglądarek
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+
+    const { s, type, tno } = req.query;
+
+    if (!s || !type) {
+        return res.status(400).json({ error: "Brak parametrów s lub type" });
+    }
 
     let targetUrl = "";
-
     if (type === 'trains') {
-        // Pobieramy listę pociągów z konkretnego serwera
         targetUrl = `https://api.simrail.app:8082/api/getTrains/${s}`;
     } else if (type === 'details') {
-        // Pobieramy szczegóły konkretnego pociągu
         targetUrl = `https://api.simrail.app:8082/api/getTrain/${s}/${tno}`;
-    } else {
-        return res.status(400).json({ error: "Błędny typ zapytania" });
     }
 
     try {
-        const response = await fetch(targetUrl);
-        if (!response.ok) throw new Error('SimRail API nie odpowiada');
+        // Używamy timeoutu, żeby Vercel nie wisiał w nieskończoność
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 8000);
+
+        const response = await fetch(targetUrl, { signal: controller.signal });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+            return res.status(response.status).json({ error: `API SimRail zwróciło błąd ${response.status}` });
+        }
+
         const data = await response.json();
-        
-        // Wysyłamy czyste dane do Twojego HTMLa
-        res.status(200).json(data);
+        return res.status(200).json(data);
+
     } catch (error) {
-        res.status(500).json({ error: "Błąd serwera Vercel", details: error.message });
+        console.error("Błąd API:", error.message);
+        return res.status(500).json({ 
+            error: "Błąd połączenia z serwerem SimRail", 
+            details: error.message 
+        });
     }
 }
