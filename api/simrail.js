@@ -1,46 +1,40 @@
 export default async function handler(req, res) {
-    // 1. Zawsze ustawiamy nagłówki na samym początku
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
 
-    // Obsługa pre-flight dla przeglądarek
-    if (req.method === 'OPTIONS') {
-        return res.status(200).end();
-    }
-
-    const { s, type, tno } = req.query;
-
-    if (!s || !type) {
-        return res.status(400).json({ error: "Brak parametrów s lub type" });
-    }
+    const { s, type, tno } = req.query; 
+    // s = serwer (np. en1, pl3), type = trains / positions / stations
 
     let targetUrl = "";
+    const baseUrl = "https://panel.simrail.eu:8084";
+
     if (type === 'trains') {
-        targetUrl = `https://api.simrail.app:8082/api/getTrains/${s}`;
+        targetUrl = `${baseUrl}/trains-open?serverCode=${s}`;
+    } else if (type === 'positions') {
+        targetUrl = `${baseUrl}/train-positions-open?serverCode=${s}`;
+    } else if (type === 'stations') {
+        targetUrl = `${baseUrl}/stations-open?serverCode=${s}`;
     } else if (type === 'details') {
-        targetUrl = `https://api.simrail.app:8082/api/getTrain/${s}/${tno}`;
+        // Uwaga: getTrain (detale) zazwyczaj jest na starym API lub w trains-open szukamy po ID
+        targetUrl = `${baseUrl}/trains-open?serverCode=${s}`; 
     }
 
     try {
-        // Używamy timeoutu, żeby Vercel nie wisiał w nieskończoność
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 8000);
-
-        const response = await fetch(targetUrl, { signal: controller.signal });
-        clearTimeout(timeout);
-
-        if (!response.ok) {
-            return res.status(response.status).json({ error: `API SimRail zwróciło błąd ${response.status}` });
+        const response = await fetch(targetUrl);
+        if (!response.ok) throw new Error(`SimRail Panel zwrócił błąd: ${response.status}`);
+        
+        const data = await response.json();
+        
+        // Jeśli szukamy detali konkretnego pociągu (tno)
+        if (type === 'details' && tno) {
+            const trainDetails = data.data.find(t => t.trainNo === tno || t.trainNoLocal === tno);
+            return res.status(200).json({ data: trainDetails });
         }
 
-        const data = await response.json();
-        return res.status(200).json(data);
-
+        res.status(200).json(data);
     } catch (error) {
-        console.error("Błąd API:", error.message);
-        return res.status(500).json({ 
-            error: "Błąd połączenia z serwerem SimRail", 
+        res.status(500).json({ 
+            error: "Błąd połączenia z panelem SimRail", 
             details: error.message 
         });
     }
