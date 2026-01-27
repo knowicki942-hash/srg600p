@@ -1,27 +1,30 @@
-// api/simrail.js
 export default async function handler(req, res) {
-    // Te nagłówki naprawiają błąd CORS
+    // Nagłówki CORS - bez tego strona na InfinityFree nie zadziała
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-    const { s, type, tno } = req.query;
-    
-    // Budujemy URL do serwera SimRail
-    let url = `https://codrut666.github.io/SimRailLineData/${s}_trains.json`;
-    if (type === 'details') {
-        url = `https://codrut666.github.io/SimRailLineData/${s}_details_${tno}.json`;
+    const { s, type, tno } = req.query; // s = nazwa serwera (np. pl1), tno = numer pociągu
+
+    let targetUrl = "";
+
+    if (type === 'trains') {
+        // Pobieramy listę pociągów z konkretnego serwera
+        targetUrl = `https://api.simrail.app:8082/api/getTrains/${s}`;
+    } else if (type === 'details') {
+        // Pobieramy szczegóły konkretnego pociągu
+        targetUrl = `https://api.simrail.app:8082/api/getTrain/${s}/${tno}`;
+    } else {
+        return res.status(400).json({ error: "Błędny typ zapytania" });
     }
 
     try {
-        const response = await fetch(url);
-        if (!response.ok) throw new Error('Błąd pobierania z SimRail');
+        const response = await fetch(targetUrl);
+        if (!response.ok) throw new Error('SimRail API nie odpowiada');
         const data = await response.json();
         
-        // Zwracamy dane do Twojej strony
-        res.status(200).json({ data });
+        // Wysyłamy czyste dane do Twojego HTMLa
+        res.status(200).json(data);
     } catch (error) {
-        // Jeśli tu wpadnie, Vercel wyśle 500 - upewnij się, że URL powyżej jest poprawny!
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: "Błąd serwera Vercel", details: error.message });
     }
 }
