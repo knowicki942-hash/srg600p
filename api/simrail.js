@@ -1,41 +1,58 @@
 export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET');
 
-    const { s, type, tno } = req.query; 
-    // s = serwer (np. en1, pl3), type = trains / positions / stations
+  // ===== CORS =====
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
-    let targetUrl = "";
-    const baseUrl = "https://panel.simrail.eu:8084";
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
 
-    if (type === 'trains') {
-        targetUrl = `${baseUrl}/trains-open?serverCode=${s}`;
-    } else if (type === 'positions') {
-        targetUrl = `${baseUrl}/train-positions-open?serverCode=${s}`;
-    } else if (type === 'stations') {
-        targetUrl = `${baseUrl}/stations-open?serverCode=${s}`;
-    } else if (type === 'details') {
-        // Uwaga: getTrain (detale) zazwyczaj jest na starym API lub w trains-open szukamy po ID
-        targetUrl = `${baseUrl}/trains-open?serverCode=${s}`; 
+  const { s, type, tno } = req.query;
+  const baseUrl = "https://panel.simrail.eu:8084";
+  let targetUrl = "";
+
+  if (type === "trains" || type === "details") {
+    targetUrl = `${baseUrl}/trains-open?serverCode=${s}`;
+  } else if (type === "positions") {
+    targetUrl = `${baseUrl}/train-positions-open?serverCode=${s}`;
+  } else if (type === "stations") {
+    targetUrl = `${baseUrl}/stations-open?serverCode=${s}`;
+  }
+
+  try {
+    const response = await fetch(targetUrl);
+    const json = await response.json();
+
+    const trains = Array.isArray(json)
+      ? json
+      : Array.isArray(json.data)
+        ? json.data
+        : [];
+
+    if (type === "details" && tno) {
+      const train = trains.find(
+        t => String(t.trainNo) === String(tno) ||
+             String(t.trainNoLocal) === String(tno)
+      );
+
+      return res.status(200).json({
+        result: true,
+        data: train || null
+      });
     }
 
-    try {
-        const response = await fetch(targetUrl);
-        if (!response.ok) throw new Error(`SimRail Panel zwrócił błąd: ${response.status}`);
-        
-        const data = await response.json();
-        
-        // Jeśli szukamy detali konkretnego pociągu (tno)
-        if (type === 'details' && tno) {
-            const trainDetails = data.data.find(t => t.trainNo === tno || t.trainNoLocal === tno);
-            return res.status(200).json({ data: trainDetails });
-        }
+    return res.status(200).json({
+      result: true,
+      data: trains,
+      count: trains.length
+    });
 
-        res.status(200).json(data);
-    } catch (error) {
-        res.status(500).json({ 
-            error: "Błąd połączenia z panelem SimRail", 
-            details: error.message 
-        });
-    }
+  } catch (e) {
+    return res.status(500).json({
+      result: false,
+      error: e.message
+    });
+  }
 }
