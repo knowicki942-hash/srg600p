@@ -2,64 +2,64 @@ export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
     if (req.method === "OPTIONS") return res.status(200).end();
 
-    const { s, type, tno } = req.query;
+    const { s, type } = req.query;
 
     try {
-        // Pobranie listy stacji
-        if (type === "stations") {
-            const url = `https://panel.simrail.eu:8084/stations-open?serverCode=${s}`;
-            const r = await fetch(url);
-            const j = await r.json();
-            return res.json({ data: j.data || [] });
-        }
+        if(type === "trains-full") {
+            // 1. Lista pociągów
+            const trainsR = await fetch(`https://panel.simrail.eu:8084/trains-open?serverCode=${s}`);
+            const trains = await trainsR.json();
 
-        // Pobranie listy pociągów
-        if (type === "trains") {
-            const url = `https://panel.simrail.eu:8084/trains-open?serverCode=${s}`;
-            const r = await fetch(url);
-            const j = await r.json();
-            return res.json({ data: j.data || [] });
-        }
+            // 2. Lista stacji
+            const stationsR = await fetch(`https://panel.simrail.eu:8084/stations-open?serverCode=${s}`);
+            const stations = await stationsR.json();
 
-        // Szczegóły pociągu
-        if (type === "details") {
-            // Pobranie aktualnej listy pociągów i filtracja po numerze
-            const url = `https://panel.simrail.eu:8084/trains-open?serverCode=${s}`;
-            const r = await fetch(url);
-            const j = await r.json();
-            const train = (j.data || []).find(t => String(t.TrainNoLocal) === String(tno));
-            if (!train) return res.status(404).json({ error: "Train not found" });
+            // 3. Szczegóły rozkładu dla każdego pociągu
+            const detailedTrains = await Promise.all(trains.data.map(async t => {
+                const timetableR = await fetch(`https://api1.aws.simrail.eu:8082/api/getEDRTimetables?serverCode=${s}`);
+                const timetableData = await timetableR.json();
+                const trainDetail = timetableData.find(td => String(td.trainNoLocal) === String(t.TrainNoLocal));
+                if(!trainDetail) return null;
 
-            // Przygotowanie prostego "timetable" z listy stacji (jeśli API nie daje pełnego rozkładu)
-            const stationsUrl = `https://panel.simrail.eu:8084/stations-open?serverCode=${s}`;
-            const stationsRes = await fetch(stationsUrl);
-            const stationsData = await stationsRes.json();
+                // Scalanie stacji z timetable
+                const fullTimetable = (trainDetail.timetable || []).map((stop, idx) => {
+                    const stationInfo = stations.data.find(st => st.Name === stop.nameForPerson);
+                    return {
+                        indexOfPoint: idx,
+                        nameForPerson: stop.nameForPerson,
+                        pointId: stationInfo?.id || null,
+                        Latititude: stationInfo?.Latititude || stop.Lat || null,
+                        Longitude: stationInfo?.Longitude || stop.Lon || null,
+                        arrivalTime: stop.arrivalTime || null,
+                        actualArrivalTime: stop.actualArrivalTime || null,
+                        departureTime: stop.departureTime || null,
+                        actualDepartureTime: stop.actualDepartureTime || null,
+                        plannedStop: stop.plannedStop || 0
+                    };
+                });
 
-            const timetable = stationsData.data.map(st => ({
-                nameForPerson: st.Name,
-                Lat: st.Latititude,
-                Lon: st.Longitude,
-                isActive: false, // opcjonalnie można ustawić na podstawie GPS pociągu
-                departureTime: null
+                // Aktualna pozycja pociągu (ostatnia stacja aktywna lub pierwsza)
+                const activeStop = fullTimetable.find(st => st.actualDepartureTime && !st.actualArrivalTime) || fullTimetable[0];
+                return {
+                    TrainNoLocal: t.TrainNoLocal,
+                    TrainName: t.TrainName || t.TrainNoLocal,
+                    StartStation: fullTimetable[0]?.nameForPerson || "",
+                    EndStation: fullTimetable[fullTimetable.length-1]?.nameForPerson || "",
+                    ServerCode: s,
+                    Latitude: activeStop?.Latititude || 0,
+                    Longitude: activeStop?.Longitude || 0,
+                    timetable: fullTimetable
+                };
             }));
 
-            return res.json({ 
-                data: {
-                    trainNoLocal: train.TrainNoLocal || train.trainNo,
-                    endStation: train.EndStation || null,
-                    status: { delayInSeconds: train.DelayInSeconds || 0 },
-                    timetable
-                }
-            });
+            res.json(detailedTrains.filter(Boolean));
+            return;
         }
 
-        return res.status(400).json({ error: "bad type" });
+        res.status(400).json({ error: "bad type" });
     } catch (e) {
-        console.error(e);
         res.status(500).json({ error: e.message });
     }
 }
-
